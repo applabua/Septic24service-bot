@@ -36,12 +36,11 @@ from telegram.ext import (
     filters
 )
 
-# aiohttp для запуска веб-сервера
 from aiohttp import web
 
 print("Бот працює...")
 
-# --- Ваши настройки ---
+# --- Настройки ---
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"  # Токен бота
 CHAT_ID = "2045410830"  # ID администратора
 
@@ -146,7 +145,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         with open("orders.txt", "a", encoding="utf-8") as f:
             f.write(f"[{now_str}]\n{finalMsg}\n\n")
 
-        # Сообщение админу
+        # Отправляем заказ админу
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
         # Бонус-счётчик
@@ -167,7 +166,6 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception:
                 pass
 
-        # Ответ пользователю в том же сообщении (если есть)
         if update.effective_message:
             await update.effective_message.reply_text(
                 f"Дякуємо, Ваше замовлення сформовано, очікуйте на дзвінок\n"
@@ -178,8 +176,6 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             )
 
         print("Отримано замовлення:", finalMsg)
-
-# ===================== Эндпоинт /save_order =====================
 
 async def save_order(request):
     """Обработчик POST-запроса /save_order, который приходит из HTML."""
@@ -200,27 +196,22 @@ async def save_order(request):
 async def on_startup(app: web.Application) -> None:
     """Запускается автоматически при старте aiohttp-сервера."""
     print("on_startup: создаём Telegram-приложение…")
-
-    # Создаём приложение бота
     application = ApplicationBuilder().token(TOKEN).build()
     app["telegram_app"] = application
 
-    # Добавляем хендлеры
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
 
     await application.initialize()
-    # Запускаем polling как корутину в уже работающем event loop
-    asyncio.create_task(application.start_polling())
+    # Запускаем run_polling в отдельном потоке, чтобы не блокировать основной event loop
+    asyncio.create_task(asyncio.to_thread(application.run_polling, close_loop=False))
     print("Бот запущен в фоне (polling).")
 
 async def on_cleanup(app: web.Application) -> None:
     """Вызывается автоматически при завершении aiohttp-сервера."""
     print("on_cleanup: останавливаем Telegram-приложение…")
     application = app["telegram_app"]
-    # Останавливаем polling перед shutdown
-    await application.stop_polling()
     await application.shutdown()
     await application.post_shutdown()
     print("Бот остановлен.")
@@ -228,9 +219,7 @@ async def on_cleanup(app: web.Application) -> None:
 def create_app() -> web.Application:
     """Создаёт и возвращает aiohttp-приложение со всеми эндпоинтами."""
     http_app = web.Application()
-    # Регистрируем эндпоинты
     http_app.router.add_post('/save_order', save_order)
-    # При старте/остановке aiohttp вызываются колбэки on_startup/on_cleanup
     http_app.on_startup.append(on_startup)
     http_app.on_cleanup.append(on_cleanup)
     return http_app
@@ -239,7 +228,6 @@ def main():
     """Главная точка входа – запускает aiohttp на Heroku."""
     port = int(os.environ.get("PORT", 8000))
     app = create_app()
-    # Запуск сервера (управление event loop берёт на себя aiohttp)
     web.run_app(app, port=port)
 
 if __name__ == "__main__":
