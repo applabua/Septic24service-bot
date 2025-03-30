@@ -1,5 +1,13 @@
+import os
+import pytz
 import tzlocal
-# Переопределяем tzlocal.get_localzone, чтобы возвращался pytz-объект
+import logging
+import sys
+import json
+from datetime import datetime
+import asyncio
+
+# Настраиваем tzlocal для Europe/Kiev
 tzlocal.get_localzone = lambda: pytz.timezone("Europe/Kiev")
 
 def patched_astimezone(tz):
@@ -19,15 +27,11 @@ def patched_astimezone(tz):
 import apscheduler.util
 apscheduler.util.astimezone = patched_astimezone
 
-import logging
-import sys
-import json
-from datetime import datetime
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+
+# Подключаем aiohttp для HTTP-сервера
+from aiohttp import web
 
 print("Бот працює...")
 
@@ -35,10 +39,22 @@ print("Бот працює...")
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
 
-# Словарь для бонус-счётчиков (не сохраняется между перезапусками)
+# Глобальный словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
 
-# Команда /start – отправляем пользователю кнопку для открытия WebApp
+# Функция для получения следующего глобального номера заказа
+def get_next_order_number():
+    try:
+        with open("order_counter.txt", "r", encoding="utf-8") as f:
+            num = int(f.read().strip())
+    except FileNotFoundError:
+        num = 0
+    num += 1
+    with open("order_counter.txt", "w", encoding="utf-8") as f:
+        f.write(str(num))
+    return num
+
+# Команда /start – отправка кнопки для открытия WebApp
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -51,7 +67,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Натисніть кнопку нижче, щоб відкрити міні‑додаток і оформити замовлення:"
     )
     
-    # URL веб‑приложения на GitHub Pages, с передачей user_id
     web_app_url = "https://applabua.github.io/Septic24service/?user_id=" + str(user.id)
     keyboard = [[InlineKeyboardButton("Замовити послугу♻️", web_app=WebAppInfo(url=web_app_url))]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -60,7 +75,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         await update.message.reply_photo(photo=photo_url, caption=greeting_text, reply_markup=reply_markup)
 
-# Команда /orders – показать содержимое файла orders.txt (только для администратора)
+# Команда /orders – показать историю заказов (только для администратора)
 async def orders_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != int(CHAT_ID):
         await update.message.reply_text("У вас немає доступу до історії замовлень.")
@@ -74,7 +89,7 @@ async def orders_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         content = "Файл з історією замовлень не знайдено."
     await update.message.reply_text(content)
 
-# Обработчик данных, отправленных через Telegram.WebApp.sendData
+# Обработчик данных, полученных через Telegram.WebApp.sendData
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.web_app_data:
         data_str = update.web_app_data.data
@@ -83,8 +98,12 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             order = {}
 
+        # Получаем глобальный номер заказа
+        order_number = get_next_order_number()
+
         # Формируем текст заказа для администратора
         finalMsg = "Нове замовлення від Septic24:\n"
+        finalMsg += f"Номер замовлення: {order_number}\n"
         finalMsg += f"Ім'я: {order.get('name','')}\n"
         finalMsg += f"Телефон: {order.get('phone','')}\n"
         finalMsg += f"Область: {order.get('region','')}\n"
@@ -126,30 +145,60 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             bonus_counters[uid] = bonus_counters.get(uid, 0) + 1
             if bonus_counters[uid] > 5:
                 bonus_counters[uid] = 1
-            bonus_text = (
-                f"Ваше замовлення: {bonus_counters[uid]} / 5 ✅\n"
-                "Рухаємось до бонусу! Кожне замовлення наближає вас до ще більшої вигоди 🎯\n\n"
-                "💧 На всі замовлення діє знижка 2% — бо ми цінуємо кожного клієнта.\n"
-                "🌟 А вже на п’ятому замовленні — даруємо 10% знижки!\n\n"
-                "Накопичуйте замовлення, а ми подбаємо про чистоту та ваш комфорт.\n"
-                "Septic24 — коли все працює чітко і з турботою 💙"
+            bonus_msg = (
+                f"Дякуємо, Ваше замовлення сформовано, очікуйте на дзвінок\n"
+                f"Замовлення {bonus_counters[uid]} / 5 ✅\n"
+                "Кожне 5 замовлення знижка 10%\n"
+                "Ваша знижка 2%\n"
+                f"Номер замовлення: {order_number}"
             )
             try:
-                await context.bot.send_message(chat_id=uid, text=bonus_text)
+                await context.bot.send_message(chat_id=uid, text=bonus_msg)
             except Exception:
                 pass
 
         if update.effective_message:
-            await update.effective_message.reply_text("Ваше замовлення збережено!\nОчікуйте на дзвінок.")
+            await update.effective_message.reply_text(
+                f"Дякуємо, Ваше замовлення сформовано, очікуйте на дзвінок\n"
+                f"Замовлення {bonus_counters.get(int(user_id_str), 1)} / 5 ✅\n"
+                "Кожне 5 замовлення знижка 10%\n"
+                "Ваша знижка 2%\n"
+                f"Номер замовлення: {order_number}"
+            )
 
         print("Отримано замовлення:", finalMsg)
 
-def main() -> None:
+# HTTP-обработчик для сохранения заказа (вызывается из HTML)
+async def save_order(request):
+    try:
+        data = await request.json()
+        order_text = data.get("order", "")
+        order_number = get_next_order_number()
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        order_entry = f"[{now_str}] Номер замовлення: {order_number}\n{order_text}\n\n"
+        with open("orders.txt", "a", encoding="utf-8") as f:
+            f.write(order_entry)
+        return web.json_response({"status": "success", "order_number": order_number})
+    except Exception as e:
+        return web.json_response({"status": "error", "error": str(e)}, status=500)
+
+async def main():
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
-    application.run_polling()
+
+    # Запускаем HTTP-сервер для эндпоинта /save_order
+    app = web.Application()
+    app.router.add_post('/save_order', save_order)
+    port = int(os.environ.get("PORT", 8000))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"HTTP server started on port {port}")
+
+    await application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
