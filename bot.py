@@ -189,24 +189,24 @@ async def main():
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
     
-    # Инициализируем приложение (необходимый шаг перед запуском polling)
+    # Инициализируем приложение
     await application.initialize()
     
-    # Запускаем polling в фоне
-    asyncio.create_task(application.start_polling())
-    
     # Запускаем HTTP-сервер для эндпоинта /save_order
-    app = web.Application()
-    app.router.add_post('/save_order', save_order)
+    http_app = web.Application()
+    http_app.router.add_post('/save_order', save_order)
     port = int(os.environ.get("PORT", 8000))
-    runner = web.AppRunner(app)
+    runner = web.AppRunner(http_app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     print(f"HTTP server started on port {port}")
     
-    # Остаемся в ожидании (работает бесконечно)
-    await asyncio.Future()  # ожидание бесконечно
+    # Одновременно запускаем polling для Telegram-бота и остаёмся в ожидании
+    await asyncio.gather(
+        application.run_polling(close_loop=False),
+        asyncio.Future()  # Эта будущая задача никогда не завершается, что удерживает цикл
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
