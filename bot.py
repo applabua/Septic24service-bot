@@ -31,20 +31,20 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-# Дополнительно для создания HTTP-сервера
+# Дополнительный импорт для создания HTTP-сервера
 import asyncio
 from aiohttp import web
 
 print("Бот працює...")
 
-# Токен бота и ID чата администратора
+# Токен бота и ID администратора
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
 
 # Словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
 
-# Функция генерации следующего номера заказа (глобальная нумерация)
+# Функция для генерации глобального номера заказа
 def get_next_order_number():
     order_file = "order_number.txt"
     if os.path.exists(order_file):
@@ -65,7 +65,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now}] Користувач {user.full_name} (ID: {user.id}) викликав /start")
-
+    
     greeting_text = (
         "👋 Ласкаво просимо до Septic24!\n\n"
         "Ми надаємо професійні послуги з викачування вигрібних ям, септиків, каналізацій "
@@ -73,7 +73,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Натисніть кнопку нижче, щоб відкрити міні‑додаток і оформити замовлення:"
     )
     
-    # URL веб‑приложения на GitHub Pages, с передачей user_id
+    # URL веб-приложения с передачей user_id
     web_app_url = "https://applabua.github.io/Septic24service/?user_id=" + str(user.id)
     keyboard = [[InlineKeyboardButton("Замовити послугу♻️", web_app=WebAppInfo(url=web_app_url))]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -176,7 +176,7 @@ async def save_order(request):
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open("orders.txt", "a", encoding="utf-8") as f:
             f.write(f"[{now_str}]\n{order_text}\n\n")
-        # Отправляем сообщение администратору
+        # Передаем объект бота в контекст, чтобы отправить сообщение админу
         context: ContextTypes.DEFAULT_TYPE = request.app['context']
         await context.bot.send_message(chat_id=CHAT_ID, text=order_text)
         return web.json_response({"status": "ok", "order_number": order_number})
@@ -189,11 +189,10 @@ def main() -> None:
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
     
-    # Функция для инициализации aiohttp-приложения с маршрутом /save_order
     async def init_aiohttp_app():
         app = web.Application()
         app.add_routes([web.post('/save_order', save_order)])
-        # Передаём объект telegram-приложения в контекст, чтобы иметь доступ к боту
+        # Передаем объект бота в контекст, чтобы иметь доступ к нему из эндпоинта
         app['context'] = application
         runner = web.AppRunner(app)
         await runner.setup()
@@ -205,7 +204,9 @@ def main() -> None:
         # Запускаем polling Telegram-бота
         await application.run_polling()
     
-    asyncio.run(main_async())
+    # Используем текущий event loop для запуска асинхронного кода
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main_async())
 
 if __name__ == "__main__":
     main()
