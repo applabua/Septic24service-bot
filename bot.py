@@ -23,7 +23,6 @@ apscheduler.util.astimezone = patched_astimezone
 import logging
 import sys
 import json
-import os
 from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -31,41 +30,33 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-# Дополнительный импорт для создания HTTP-сервера
-import asyncio
-from aiohttp import web
-
 print("Бот працює...")
 
-# Токен бота и ID администратора
+# Токен бота и ID чата администратора
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
 
 # Словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
 
-# Функция для генерации глобального номера заказа
+# Функция для генерации глобального номера заказа на сервере
 def get_next_order_number():
-    order_file = "order_number.txt"
-    if os.path.exists(order_file):
-        try:
-            with open(order_file, "r", encoding="utf-8") as f:
-                last_number = int(f.read().strip())
-        except Exception:
-            last_number = 0
-    else:
-        last_number = 0
-    new_number = last_number + 1
-    with open(order_file, "w", encoding="utf-8") as f:
-        f.write(str(new_number))
-    return f"№{new_number:05d}"
+    try:
+        with open("last_order_number.txt", "r", encoding="utf-8") as f:
+            last_order = int(f.read().strip())
+    except Exception:
+        last_order = 0
+    last_order += 1
+    with open("last_order_number.txt", "w", encoding="utf-8") as f:
+        f.write(str(last_order))
+    return last_order
 
 # Команда /start – отправляем пользователю кнопку для открытия WebApp
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now}] Користувач {user.full_name} (ID: {user.id}) викликав /start")
-    
+
     greeting_text = (
         "👋 Ласкаво просимо до Septic24!\n\n"
         "Ми надаємо професійні послуги з викачування вигрібних ям, септиків, каналізацій "
@@ -73,7 +64,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Натисніть кнопку нижче, щоб відкрити міні‑додаток і оформити замовлення:"
     )
     
-    # URL веб-приложения с передачей user_id
+    # URL веб‑приложения на GitHub Pages, с передачей user_id
     web_app_url = "https://applabua.github.io/Septic24service/?user_id=" + str(user.id)
     keyboard = [[InlineKeyboardButton("Замовити послугу♻️", web_app=WebAppInfo(url=web_app_url))]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -105,8 +96,12 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             order = {}
 
+        # Генерируем глобальный номер заказа
         order_number = get_next_order_number()
-        finalMsg = f"Нове замовлення {order_number} від Septic24:\n"
+        formatted_order_number = "№" + str(order_number).zfill(5)
+        
+        # Формируем текст заказа для администратора с номером заказа
+        finalMsg = f"{formatted_order_number}\nНове замовлення від Septic24:\n"
         finalMsg += f"Ім'я: {order.get('name','')}\n"
         finalMsg += f"Телефон: {order.get('phone','')}\n"
         finalMsg += f"Область: {order.get('region','')}\n"
@@ -143,70 +138,35 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
-        if user_id_str.isdigit():
-            uid = int(user_id_str)
-            bonus_counters[uid] = bonus_counters.get(uid, 0) + 1
-            if bonus_counters[uid] > 5:
-                bonus_counters[uid] = 1
-            bonus_text = (
-                f"Ваше замовлення: {bonus_counters[uid]} / 5 ✅\n"
-                "Рухаємось до бонусу! Кожне замовлення наближає вас до ще більшої вигоди 🎯\n\n"
-                "💧 На всі замовлення діє знижка 2% — бо ми цінуємо кожного клієнта.\n"
-                "🌟 А вже на п’ятому замовленні — даруємо 10% знижки!\n\n"
-                "Накопичуйте замовлення, а ми подбаємо про чистоту та ваш комфорт.\n"
-                "Septic24 — коли все працює чітко і з турботою 💙"
-            )
-            try:
-                await context.bot.send_message(chat_id=uid, text=bonus_text)
-            except Exception:
-                pass
+        # Вычисляем бонус по номеру заказа (по модулю 5)
+        bonus = order_number % 5
+        if bonus == 0:
+            bonus = 5
+        bonus_text = (
+            f"Ваше замовлення: {bonus} / 5 ✅\n"
+            "Рухаємось до бонусу! Кожне замовлення наближає вас до ще більшої вигоди 🎯\n\n"
+            "💧 На всі замовлення діє знижка 2% — бо ми цінуємо кожного клієнта.\n"
+            "🌟 А вже на п’ятому замовленні — даруємо 10% знижки!\n\n"
+            "Накопичуйте замовлення, а ми подбаємо про чистоту та ваш комфорт.\n"
+            "Septic24 — коли все працює чітко і з турботою 💙"
+        )
+        try:
+            if user_id_str.isdigit():
+                await context.bot.send_message(chat_id=int(user_id_str), text=bonus_text)
+        except Exception:
+            pass
 
         if update.effective_message:
             await update.effective_message.reply_text("Ваше замовлення збережено!\nОчікуйте на дзвінок.")
 
         print("Отримано замовлення:", finalMsg)
 
-# HTTP-эндпоинт для сохранения заказа (вызывается из WebApp)
-async def save_order(request):
-    try:
-        data = await request.json()
-        order_text = data.get("order", "")
-        order_number = get_next_order_number()
-        order_text = f"Нове замовлення {order_number} від Septic24:\n" + order_text
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open("orders.txt", "a", encoding="utf-8") as f:
-            f.write(f"[{now_str}]\n{order_text}\n\n")
-        # Передаем объект бота в контекст, чтобы отправить сообщение админу
-        context: ContextTypes.DEFAULT_TYPE = request.app['context']
-        await context.bot.send_message(chat_id=CHAT_ID, text=order_text)
-        return web.json_response({"status": "ok", "order_number": order_number})
-    except Exception as e:
-        return web.json_response({"status": "error", "error": str(e)})
-
 def main() -> None:
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
-    
-    async def init_aiohttp_app():
-        app = web.Application()
-        app.add_routes([web.post('/save_order', save_order)])
-        # Передаем объект бота в контекст, чтобы иметь доступ к нему из эндпоинта
-        app['context'] = application
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', 8080)
-        await site.start()
-    
-    async def main_async():
-        await init_aiohttp_app()
-        # Запускаем polling Telegram-бота
-        await application.run_polling()
-    
-    # Используем текущий event loop для запуска асинхронного кода
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main_async())
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
