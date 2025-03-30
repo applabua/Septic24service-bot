@@ -23,14 +23,9 @@ apscheduler.util.astimezone = patched_astimezone
 import logging
 import sys
 import json
-import os
 from datetime import datetime
-import threading
-import signal
 
-from flask import Flask, request, jsonify
-
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Bot
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
@@ -41,23 +36,10 @@ print("Бот працює...")
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
 
-# Глобальный объект бота
-bot = Bot(token=TOKEN)
+# Словарь для бонус-счётчиков (не сохраняется между перезапусками)
+bonus_counters = {}
 
-# Глобальный объект приложения Telegram-бота (для остановки при SIGTERM)
-app_obj = None
-
-# Обработчик сигнала SIGTERM для корректного завершения процесса
-def shutdown_handler(signum, frame):
-    print("SIGTERM отримано, завершуємо роботу...")
-    global app_obj
-    if app_obj is not None:
-        app_obj.stop()  # Останавливает polling loop
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, shutdown_handler)
-
-# Функция для генерации глобального номера заказа (единая нумерация)
+# Функция для генерации глобального номера заказа на сервере
 def get_next_order_number():
     try:
         with open("last_order_number.txt", "r", encoding="utf-8") as f:
@@ -69,36 +51,7 @@ def get_next_order_number():
         f.write(str(last_order))
     return last_order
 
-# Flask-приложение для обработки POST-запросов с заказами
-flask_app = Flask(__name__)
-
-@flask_app.route('/save_order', methods=['POST'])
-def save_order():
-    data = request.get_json()
-    order_text = data.get("order", "")
-    if not order_text:
-        return jsonify({"status": "error", "error": "No order provided"}), 400
-    # Генерируем глобальный номер заказа
-    order_number = get_next_order_number()
-    formatted_order_number = "№" + str(order_number).zfill(5)
-    # Если заказ уже содержит номер, удаляем его
-    lines = order_text.split("\n")
-    if lines and lines[0].startswith("№"):
-        lines.pop(0)
-    final_order_text = f"{formatted_order_number}\n" + "\n".join(lines)
-    
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open("orders.txt", "a", encoding="utf-8") as f:
-        f.write(f"[{now_str}]\n{final_order_text}\n\n")
-    
-    try:
-        bot.send_message(chat_id=CHAT_ID, text=final_order_text)
-    except Exception as e:
-        print("Error sending order to Telegram:", e)
-    
-    return jsonify({"status": "ok", "order_number": formatted_order_number})
-
-# Обработчик команды /start – отправляем пользователю кнопку для открытия WebApp
+# Команда /start – отправляем пользователю кнопку для открытия WebApp
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -111,6 +64,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Натисніть кнопку нижче, щоб відкрити міні‑додаток і оформити замовлення:"
     )
     
+    # URL веб‑приложения на GitHub Pages, с передачей user_id
     web_app_url = "https://applabua.github.io/Septic24service/?user_id=" + str(user.id)
     keyboard = [[InlineKeyboardButton("Замовити послугу♻️", web_app=WebAppInfo(url=web_app_url))]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -122,7 +76,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Команда /orders – показать содержимое файла orders.txt (только для администратора)
 async def orders_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != int(CHAT_ID):
-        await context.bot.send_message(chat_id=update.effective_user.id, text="У вас немає доступу до історії замовлень.")
+        await update.message.reply_text("У вас немає доступу до історії замовлень.")
         return
     try:
         with open("orders.txt", "r", encoding="utf-8") as f:
@@ -131,7 +85,7 @@ async def orders_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             content = "Історія замовлень порожня."
     except FileNotFoundError:
         content = "Файл з історією замовлень не знайдено."
-    await context.bot.send_message(chat_id=update.effective_user.id, text=content)
+    await update.message.reply_text(content)
 
 # Обработчик данных, отправленных через Telegram.WebApp.sendData
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -142,9 +96,11 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             order = {}
 
+        # Генерируем глобальный номер заказа
         order_number = get_next_order_number()
         formatted_order_number = "№" + str(order_number).zfill(5)
         
+        # Формируем текст заказа для администратора с номером заказа
         finalMsg = f"{formatted_order_number}\nНове замовлення від Septic24:\n"
         finalMsg += f"Ім'я: {order.get('name','')}\n"
         finalMsg += f"Телефон: {order.get('phone','')}\n"
@@ -180,9 +136,9 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         with open("orders.txt", "a", encoding="utf-8") as f:
             f.write(f"[{now_str}]\n{finalMsg}\n\n")
 
-        # Отправляем заказ админу
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
+        # Вычисляем бонус по номеру заказа (по модулю 5)
         bonus = order_number % 5
         if bonus == 0:
             bonus = 5
@@ -196,36 +152,17 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             pass
 
-        # Отправляем ответ напрямую пользователю
-        await context.bot.send_message(
-            chat_id=update.effective_user.id,
-            text=f"Ваше замовлення {formatted_order_number} збережено!\nОчікуйте на дзвінок."
-        )
+        if update.effective_message:
+            await update.effective_message.reply_text("Ваше замовлення збережено!\nОчікуйте на дзвінок.")
 
         print("Отримано замовлення:", finalMsg)
 
-# Функция для локального запуска Flask-сервера (используется только при запуске с --run-both)
-def run_flask():
-    port = int(os.environ.get("PORT", 5000))
-    flask_app.run(host="0.0.0.0", port=port)
-
-# Функция для запуска Telegram-бота (polling)
 def main() -> None:
-    global app_obj
-    app_obj = ApplicationBuilder().token(TOKEN).build()
-    app_obj.add_handler(CommandHandler("start", start))
-    app_obj.add_handler(CommandHandler("orders", orders_history))
-    app_obj.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
-    app_obj.run_polling()
+    application = ApplicationBuilder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("orders", orders_history))
+    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
+    application.run_polling()
 
 if __name__ == "__main__":
-    # Если запущено с параметром --bot-only, запускаем только бота
-    if "--bot-only" in sys.argv:
-        main()
-    # Если указано --run-both, запускаем оба сервиса в одном процессе (для локального тестирования)
-    elif "--run-both" in sys.argv:
-        threading.Thread(target=run_flask, daemon=True).start()
-        main()
-    else:
-        # По умолчанию ничего не запускаем, чтобы при импорте (например, Gunicorn) не стартовал встроенный сервер.
-        pass
+    main()
