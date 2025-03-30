@@ -5,3 +5,4 @@ pytz
 tzlocal
 apscheduler
 aiohttp==3.8.4
+gunicorn==20.1.0
