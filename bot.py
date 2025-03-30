@@ -198,7 +198,7 @@ async def main():
     await site.start()
     print(f"HTTP server started on port {port}")
 
-    await application.run_polling()
+    await application.run_polling(close_loop=False)
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
