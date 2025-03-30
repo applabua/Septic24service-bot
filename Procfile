@@ -1,2 +1,3 @@
-web: python app.py
+worker: python bot.py --bot-only
+
 
