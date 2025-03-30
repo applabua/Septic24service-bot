@@ -23,12 +23,17 @@ apscheduler.util.astimezone = patched_astimezone
 import logging
 import sys
 import json
+import os
 from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
+
+# Дополнительно для создания HTTP-сервера
+import asyncio
+from aiohttp import web
 
 print("Бот працює...")
 
@@ -38,6 +43,22 @@ CHAT_ID = "2045410830"  # ID администратора
 
 # Словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
+
+# Функция генерации следующего номера заказа (глобальная нумерация)
+def get_next_order_number():
+    order_file = "order_number.txt"
+    if os.path.exists(order_file):
+        try:
+            with open(order_file, "r", encoding="utf-8") as f:
+                last_number = int(f.read().strip())
+        except Exception:
+            last_number = 0
+    else:
+        last_number = 0
+    new_number = last_number + 1
+    with open(order_file, "w", encoding="utf-8") as f:
+        f.write(str(new_number))
+    return f"№{new_number:05d}"
 
 # Команда /start – отправляем пользователю кнопку для открытия WebApp
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -84,8 +105,8 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             order = {}
 
-        # Формируем текст заказа для администратора
-        finalMsg = "Нове замовлення від Septic24:\n"
+        order_number = get_next_order_number()
+        finalMsg = f"Нове замовлення {order_number} від Septic24:\n"
         finalMsg += f"Ім'я: {order.get('name','')}\n"
         finalMsg += f"Телефон: {order.get('phone','')}\n"
         finalMsg += f"Область: {order.get('region','')}\n"
@@ -145,12 +166,46 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         print("Отримано замовлення:", finalMsg)
 
+# HTTP-эндпоинт для сохранения заказа (вызывается из WebApp)
+async def save_order(request):
+    try:
+        data = await request.json()
+        order_text = data.get("order", "")
+        order_number = get_next_order_number()
+        order_text = f"Нове замовлення {order_number} від Septic24:\n" + order_text
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open("orders.txt", "a", encoding="utf-8") as f:
+            f.write(f"[{now_str}]\n{order_text}\n\n")
+        # Отправляем сообщение администратору
+        context: ContextTypes.DEFAULT_TYPE = request.app['context']
+        await context.bot.send_message(chat_id=CHAT_ID, text=order_text)
+        return web.json_response({"status": "ok", "order_number": order_number})
+    except Exception as e:
+        return web.json_response({"status": "error", "error": str(e)})
+
 def main() -> None:
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
-    application.run_polling()
+    
+    # Функция для инициализации aiohttp-приложения с маршрутом /save_order
+    async def init_aiohttp_app():
+        app = web.Application()
+        app.add_routes([web.post('/save_order', save_order)])
+        # Передаём объект telegram-приложения в контекст, чтобы иметь доступ к боту
+        app['context'] = application
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', 8080)
+        await site.start()
+    
+    async def main_async():
+        await init_aiohttp_app()
+        # Запускаем polling Telegram-бота
+        await application.run_polling()
+    
+    asyncio.run(main_async())
 
 if __name__ == "__main__":
     main()
