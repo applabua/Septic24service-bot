@@ -41,8 +41,8 @@ from aiohttp import web
 print("Бот працює...")
 
 # --- Настройки ---
-TOKEN = "ВАШ_TELEGRAM_BOT_TOKEN"  # Токен бота
-CHAT_ID = "ВАШ_CHAT_ID"           # ID администратора
+TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"  # Токен бота
+CHAT_ID = "2045410830"           # ID администратора
 
 # Словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
