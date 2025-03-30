@@ -1,11 +1,11 @@
 import os
+import asyncio
 import pytz
 import tzlocal
 import logging
 import sys
 import json
 from datetime import datetime
-import asyncio
 
 # Настраиваем tzlocal для Europe/Kiev
 tzlocal.get_localzone = lambda: pytz.timezone("Europe/Kiev")
@@ -28,18 +28,24 @@ import apscheduler.util
 apscheduler.util.astimezone = patched_astimezone
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder, 
+    CommandHandler, 
+    MessageHandler, 
+    ContextTypes, 
+    filters
+)
 
-# Подключаем aiohttp для HTTP-сервера
+# aiohttp для запуска веб-сервера
 from aiohttp import web
 
 print("Бот працює...")
 
-# Токен бота и ID чата администратора
-TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
-CHAT_ID = "2045410830"  # ID администратора
+# --- Ваши настройки ---
+TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"  # Токен бота
+CHAT_ID = "2045410830"                                  # ID администратора
 
-# Глобальный словарь для бонус-счётчиков (не сохраняется между перезапусками)
+# Словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
 
 # Функция для получения следующего глобального номера заказа
@@ -54,8 +60,10 @@ def get_next_order_number():
         f.write(str(num))
     return num
 
-# Команда /start – отправка кнопки для открытия WebApp
+# ===================== Хендлеры Telegram ======================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /start – отправка кнопки с WebApp."""
     user = update.effective_user
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{now}] Користувач {user.full_name} (ID: {user.id}) викликав /start")
@@ -75,8 +83,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         await update.message.reply_photo(photo=photo_url, caption=greeting_text, reply_markup=reply_markup)
 
-# Команда /orders – показать историю заказов (только для администратора)
 async def orders_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /orders – показать историю заказов (только для админа)."""
     if update.effective_user.id != int(CHAT_ID):
         await update.message.reply_text("У вас немає доступу до історії замовлень.")
         return
@@ -89,8 +97,8 @@ async def orders_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         content = "Файл з історією замовлень не знайдено."
     await update.message.reply_text(content)
 
-# Обработчик данных, полученных через Telegram.WebApp.sendData
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик данных, полученных через Telegram.WebApp.sendData()."""
     if update.web_app_data:
         data_str = update.web_app_data.data
         try:
@@ -101,7 +109,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Получаем глобальный номер заказа
         order_number = get_next_order_number()
 
-        # Формируем текст заказа для администратора
+        # Формируем текст заказа
         finalMsg = "Нове замовлення від Septic24:\n"
         finalMsg += f"Номер замовлення: {order_number}\n"
         finalMsg += f"Ім'я: {order.get('name','')}\n"
@@ -138,8 +146,10 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         with open("orders.txt", "a", encoding="utf-8") as f:
             f.write(f"[{now_str}]\n{finalMsg}\n\n")
 
+        # Сообщение админу
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
+        # Бонус-счётчик
         if user_id_str.isdigit():
             uid = int(user_id_str)
             bonus_counters[uid] = bonus_counters.get(uid, 0) + 1
@@ -157,6 +167,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception:
                 pass
 
+        # Ответ пользователю в том же сообщении (если есть)
         if update.effective_message:
             await update.effective_message.reply_text(
                 f"Дякуємо, Ваше замовлення сформовано, очікуйте на дзвінок\n"
@@ -168,8 +179,10 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         print("Отримано замовлення:", finalMsg)
 
-# HTTP-обработчик для сохранения заказа (вызывается из HTML)
+# ===================== aiohttp: эндпоинт /save_order =====================
+
 async def save_order(request):
+    """Обработчик POST-запроса /save_order, который приходит из HTML."""
     try:
         data = await request.json()
         order_text = data.get("order", "")
@@ -182,31 +195,52 @@ async def save_order(request):
     except Exception as e:
         return web.json_response({"status": "error", "error": str(e)}, status=500)
 
-async def main():
-    # Создаем Telegram-приложение и добавляем хендлеры
+# ===================== Функции запуска aiohttp + бота =====================
+
+async def on_startup(app: web.Application) -> None:
+    """Запускается автоматически при старте aiohttp-сервера."""
+    print("on_startup: создаём Telegram-приложение…")
+
+    # Создаём приложение бота
     application = ApplicationBuilder().token(TOKEN).build()
+    app["telegram_app"] = application
+
+    # Добавляем хендлеры
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
-    
-    # Инициализируем приложение
+
+    # Инициализируем и запускаем бота в фоне
     await application.initialize()
-    
-    # Запускаем HTTP-сервер для эндпоинта /save_order
+    # run_polling с параметром close_loop=False, чтобы не пытался закрыть event loop
+    asyncio.create_task(application.run_polling(close_loop=False))
+    print("Бот запущен в фоне (polling).")
+
+async def on_cleanup(app: web.Application) -> None:
+    """Вызывается автоматически при завершении aiohttp-сервера."""
+    print("on_cleanup: останавливаем Telegram-приложение…")
+    application = app["telegram_app"]
+    # Аккуратно завершаем работу бота
+    await application.shutdown()
+    await application.post_shutdown()
+    print("Бот остановлен.")
+
+def create_app() -> web.Application:
+    """Создаёт и возвращает aiohttp-приложение со всеми эндпоинтами."""
     http_app = web.Application()
+    # Регистрируем эндпоинты
     http_app.router.add_post('/save_order', save_order)
+    # При старте/остановке aiohttp вызываются колбэки on_startup/on_cleanup
+    http_app.on_startup.append(on_startup)
+    http_app.on_cleanup.append(on_cleanup)
+    return http_app
+
+def main():
+    """Главная точка входа – запускает aiohttp на Heroku."""
     port = int(os.environ.get("PORT", 8000))
-    runner = web.AppRunner(http_app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    print(f"HTTP server started on port {port}")
-    
-    # Одновременно запускаем polling для Telegram-бота и остаёмся в ожидании
-    await asyncio.gather(
-        application.run_polling(close_loop=False),
-        asyncio.Future()  # Эта будущая задача никогда не завершается, что удерживает цикл
-    )
+    app = create_app()
+    # Запуск сервера (управление event loop берёт на себя aiohttp)
+    web.run_app(app, port=port)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
