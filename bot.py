@@ -183,6 +183,7 @@ async def save_order(request):
         return web.json_response({"status": "error", "error": str(e)}, status=500)
 
 async def main():
+    # Создаем Telegram-приложение
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
@@ -198,9 +199,11 @@ async def main():
     await site.start()
     print(f"HTTP server started on port {port}")
 
+    # Запускаем polling для Telegram бота без закрытия event loop
     await application.run_polling(close_loop=False)
 
 if __name__ == "__main__":
+    # Этот блок вставляем в самый конец файла, он запускает функцию main() и корректно завершает цикл событий
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(main())
