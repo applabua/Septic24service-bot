@@ -26,6 +26,7 @@ import json
 import os
 from datetime import datetime
 import threading
+import signal
 
 from flask import Flask, request, jsonify
 
@@ -42,6 +43,19 @@ CHAT_ID = "2045410830"  # ID администратора
 
 # Глобальный объект бота
 bot = Bot(token=TOKEN)
+
+# Глобальный объект приложения Telegram-бота (для остановки при SIGTERM)
+app_obj = None
+
+# Обработчик сигнала SIGTERM для корректного завершения процесса
+def shutdown_handler(signum, frame):
+    print("SIGTERM отримано, завершуємо роботу...")
+    global app_obj
+    if app_obj is not None:
+        app_obj.stop()  # Останавливает polling loop
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, shutdown_handler)
 
 # Функция для генерации глобального номера заказа (единая нумерация)
 def get_next_order_number():
@@ -186,18 +200,19 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         print("Отримано замовлення:", finalMsg)
 
-# Функция для локального запуска Flask-сервера (используется только при запуске в режиме --run-both)
+# Функция для локального запуска Flask-сервера (используется только при запуске с --run-both)
 def run_flask():
     port = int(os.environ.get("PORT", 5000))
     flask_app.run(host="0.0.0.0", port=port)
 
 # Функция для запуска Telegram-бота (polling)
 def main() -> None:
-    application = ApplicationBuilder().token(TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("orders", orders_history))
-    application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
-    application.run_polling()
+    global app_obj
+    app_obj = ApplicationBuilder().token(TOKEN).build()
+    app_obj.add_handler(CommandHandler("start", start))
+    app_obj.add_handler(CommandHandler("orders", orders_history))
+    app_obj.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
+    app_obj.run_polling()
 
 if __name__ == "__main__":
     # Если запущено с параметром --bot-only, запускаем только бота
@@ -209,5 +224,4 @@ if __name__ == "__main__":
         main()
     else:
         # По умолчанию ничего не запускаем, чтобы при импорте (например, Gunicorn) не стартовал встроенный сервер.
-        # Gunicorn подхватит переменную flask_app для обслуживания веб-запросов.
         pass
