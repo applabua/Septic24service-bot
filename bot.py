@@ -1,4 +1,3 @@
-import pytz
 import tzlocal
 # Переопределяем tzlocal.get_localzone, чтобы возвращался pytz-объект
 tzlocal.get_localzone = lambda: pytz.timezone("Europe/Kiev")
