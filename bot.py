@@ -36,9 +36,6 @@ print("Бот працює...")
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
 
-# Словарь для бонус-счётчиков (не сохраняется между перезапусками)
-bonus_counters = {}
-
 # Команда /start – отправляем пользователю кнопку для открытия WebApp
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -116,32 +113,41 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if user_id_str:
             finalMsg += f"UserID: {user_id_str}\n"
 
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open("orders.txt", "a", encoding="utf-8") as f:
-            f.write(f"[{now_str}]\n{finalMsg}\n\n")
+        # Получаем глобальный номер заказа из файла
+        try:
+            with open("order_number.txt", "r", encoding="utf-8") as f:
+                last_order_number = int(f.read().strip())
+        except:
+            last_order_number = 0
+        order_number = last_order_number + 1
+        with open("order_number.txt", "w", encoding="utf-8") as f:
+            f.write(str(order_number))
+        order_str = f"{order_number:05d}"
+        finalMsg = f"Номер замовлення: {order_str}\n" + finalMsg
 
-        await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
-
-        # Отправляем в чат длинное сообщение с бонусной информацией
-        if user_id_str.isdigit():
-            uid = int(user_id_str)
-            bonus_counters[uid] = bonus_counters.get(uid, 0) + 1
-            if bonus_counters[uid] > 5:
-                bonus_counters[uid] = 1
-            bonus_text = (
-                f"Ваше замовлення: {bonus_counters[uid]} / 5 ✅\n"
+        # Формируем бонусное сообщение на основе глобального номера заказа
+        bonus_progress = order_number % 5 if order_number % 5 != 0 else 5
+        bonus_text = (
+                f"Ваше замовлення: {bonus_progress} / 5 ✅\n"
                 "Рухаємось до бонусу! Кожне замовлення наближає вас до ще більшої вигоди 🎯\n\n"
                 "💧 На всі замовлення діє знижка 2% — бо ми цінуємо кожного клієнта.\n"
                 "🌟 А вже на п’ятому замовленні — даруємо 10% знижки!\n\n"
                 "Накопичуйте замовлення, а ми подбаємо про чистоту та ваш комфорт.\n"
                 "Septic24 — коли все працює чітко і з турботою 💙"
             )
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open("orders.txt", "a", encoding="utf-8") as f:
+            f.write(f"[{now_str}]\n{finalMsg}\n\n")
+
+        await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
+
+        if user_id_str.isdigit():
             try:
-                await context.bot.send_message(chat_id=uid, text=bonus_text)
+                await context.bot.send_message(chat_id=int(user_id_str), text=bonus_text)
             except Exception:
                 pass
 
-        # Уведомление в приложение остаётся коротким
         if update.effective_message:
             await update.effective_message.reply_text("Дякуємо, Ваше замовлення сформовано, очікуйте на дзвінок")
 
