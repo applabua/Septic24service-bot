@@ -23,9 +23,13 @@ apscheduler.util.astimezone = patched_astimezone
 import logging
 import sys
 import json
+import os
 from datetime import datetime
+import threading
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from flask import Flask, request, jsonify
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Bot
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
@@ -36,10 +40,13 @@ print("Бот працює...")
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
 
+# Глобальный объект бота
+bot = Bot(token=TOKEN)
+
 # Словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
 
-# Функция для генерации глобального номера заказа на сервере
+# Функция для генерации глобального номера заказа на сервере (единой нумерации)
 def get_next_order_number():
     try:
         with open("last_order_number.txt", "r", encoding="utf-8") as f:
@@ -51,7 +58,36 @@ def get_next_order_number():
         f.write(str(last_order))
     return last_order
 
-# Команда /start – отправляем пользователю кнопку для открытия WebApp
+# Flask-приложение для обработки POST-запросов с заказами
+flask_app = Flask(__name__)
+
+@flask_app.route('/save_order', methods=['POST'])
+def save_order():
+    data = request.get_json()
+    order_text = data.get("order", "")
+    if not order_text:
+        return jsonify({"status": "error", "error": "No order provided"}), 400
+    # Генерируем глобальный номер заказа
+    order_number = get_next_order_number()
+    formatted_order_number = "№" + str(order_number).zfill(5)
+    # Если заказ уже содержит номер, удаляем его
+    lines = order_text.split("\n")
+    if lines[0].startswith("№"):
+        lines.pop(0)
+    final_order_text = f"{formatted_order_number}\n" + "\n".join(lines)
+    
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open("orders.txt", "a", encoding="utf-8") as f:
+        f.write(f"[{now_str}]\n{final_order_text}\n\n")
+    
+    try:
+        bot.send_message(chat_id=CHAT_ID, text=final_order_text)
+    except Exception as e:
+        print("Error sending order to Telegram:", e)
+    
+    return jsonify({"status": "ok", "order_number": formatted_order_number})
+
+# Обработчик команды /start – отправляем пользователю кнопку для открытия WebApp
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -64,7 +100,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Натисніть кнопку нижче, щоб відкрити міні‑додаток і оформити замовлення:"
     )
     
-    # URL веб‑приложения на GitHub Pages, с передачей user_id
     web_app_url = "https://applabua.github.io/Septic24service/?user_id=" + str(user.id)
     keyboard = [[InlineKeyboardButton("Замовити послугу♻️", web_app=WebAppInfo(url=web_app_url))]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -96,11 +131,9 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             order = {}
 
-        # Генерируем глобальный номер заказа
         order_number = get_next_order_number()
         formatted_order_number = "№" + str(order_number).zfill(5)
         
-        # Формируем текст заказа для администратора с номером заказа
         finalMsg = f"{formatted_order_number}\nНове замовлення від Septic24:\n"
         finalMsg += f"Ім'я: {order.get('name','')}\n"
         finalMsg += f"Телефон: {order.get('phone','')}\n"
@@ -138,7 +171,6 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
-        # Вычисляем бонус по номеру заказа (по модулю 5)
         bonus = order_number % 5
         if bonus == 0:
             bonus = 5
@@ -157,6 +189,10 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         print("Отримано замовлення:", finalMsg)
 
+def run_flask():
+    port = int(os.environ.get("PORT", 5000))
+    flask_app.run(host="0.0.0.0", port=port)
+
 def main() -> None:
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
@@ -165,4 +201,5 @@ def main() -> None:
     application.run_polling()
 
 if __name__ == "__main__":
+    threading.Thread(target=run_flask).start()
     main()
