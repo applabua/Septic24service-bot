@@ -39,18 +39,6 @@ CHAT_ID = "2045410830"  # ID администратора
 # Словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
 
-# Функция для генерации глобального номера заказа на сервере
-def get_next_order_number():
-    try:
-        with open("last_order_number.txt", "r", encoding="utf-8") as f:
-            last_order = int(f.read().strip())
-    except Exception:
-        last_order = 0
-    last_order += 1
-    with open("last_order_number.txt", "w", encoding="utf-8") as f:
-        f.write(str(last_order))
-    return last_order
-
 # Команда /start – отправляем пользователю кнопку для открытия WebApp
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -96,12 +84,8 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             order = {}
 
-        # Генерируем глобальный номер заказа
-        order_number = get_next_order_number()
-        formatted_order_number = "№" + str(order_number).zfill(5)
-        
-        # Формируем текст заказа для администратора с номером заказа
-        finalMsg = f"{formatted_order_number}\nНове замовлення від Septic24:\n"
+        # Формируем текст заказа для администратора
+        finalMsg = "Нове замовлення від Septic24:\n"
         finalMsg += f"Ім'я: {order.get('name','')}\n"
         finalMsg += f"Телефон: {order.get('phone','')}\n"
         finalMsg += f"Область: {order.get('region','')}\n"
@@ -138,23 +122,23 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
-        # Вычисляем бонус по номеру заказа (по модулю 5)
-        bonus = order_number % 5
-        if bonus == 0:
-            bonus = 5
-        bonus_text = (
-            f"Ваше замовлення: {bonus} / 5 ✅\n"
-            "Рухаємось до бонусу! Кожне замовлення наближає вас до ще більшої вигоди 🎯\n\n"
-            "💧 На всі замовлення діє знижка 2% — бо ми цінуємо кожного клієнта.\n"
-            "🌟 А вже на п’ятому замовленні — даруємо 10% знижки!\n\n"
-            "Накопичуйте замовлення, а ми подбаємо про чистоту та ваш комфорт.\n"
-            "Septic24 — коли все працює чітко і з турботою 💙"
-        )
-        try:
-            if user_id_str.isdigit():
-                await context.bot.send_message(chat_id=int(user_id_str), text=bonus_text)
-        except Exception:
-            pass
+        if user_id_str.isdigit():
+            uid = int(user_id_str)
+            bonus_counters[uid] = bonus_counters.get(uid, 0) + 1
+            if bonus_counters[uid] > 5:
+                bonus_counters[uid] = 1
+            bonus_text = (
+                f"Ваше замовлення: {bonus_counters[uid]} / 5 ✅\n"
+                "Рухаємось до бонусу! Кожне замовлення наближає вас до ще більшої вигоди 🎯\n\n"
+                "💧 На всі замовлення діє знижка 2% — бо ми цінуємо кожного клієнта.\n"
+                "🌟 А вже на п’ятому замовленні — даруємо 10% знижки!\n\n"
+                "Накопичуйте замовлення, а ми подбаємо про чистоту та ваш комфорт.\n"
+                "Septic24 — коли все працює чітко і з турботою 💙"
+            )
+            try:
+                await context.bot.send_message(chat_id=uid, text=bonus_text)
+            except Exception:
+                pass
 
         if update.effective_message:
             await update.effective_message.reply_text("Ваше замовлення збережено!\nОчікуйте на дзвінок.")
