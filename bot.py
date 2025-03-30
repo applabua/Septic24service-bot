@@ -183,12 +183,18 @@ async def save_order(request):
         return web.json_response({"status": "error", "error": str(e)}, status=500)
 
 async def main():
-    # Создаем Telegram-приложение
+    # Создаем Telegram-приложение и добавляем хендлеры
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
-
+    
+    # Инициализируем приложение (необходимый шаг перед запуском polling)
+    await application.initialize()
+    
+    # Запускаем polling в фоне
+    asyncio.create_task(application.start_polling())
+    
     # Запускаем HTTP-сервер для эндпоинта /save_order
     app = web.Application()
     app.router.add_post('/save_order', save_order)
@@ -198,15 +204,9 @@ async def main():
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     print(f"HTTP server started on port {port}")
-
-    # Запускаем polling для Telegram бота без закрытия event loop
-    await application.run_polling(close_loop=False)
+    
+    # Остаемся в ожидании (работает бесконечно)
+    await asyncio.Future()  # ожидание бесконечно
 
 if __name__ == "__main__":
-    # Этот блок вставляем в самый конец файла, он запускает функцию main() и корректно завершает цикл событий
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(main())
-    finally:
-        loop.run_until_complete(loop.shutdown_asyncgens())
-        loop.close()
+    asyncio.run(main())
