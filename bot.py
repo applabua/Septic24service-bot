@@ -191,6 +191,12 @@ async def save_order(request):
     except Exception as e:
         return web.json_response({"status": "error", "error": str(e)}, status=500)
 
+# Функция для запуска polling бота в отдельном потоке с собственным event loop
+def run_bot_polling(application):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    application.run_polling(close_loop=False)
+
 # ===================== Функции запуска aiohttp + бота =====================
 
 async def on_startup(app: web.Application) -> None:
@@ -204,8 +210,8 @@ async def on_startup(app: web.Application) -> None:
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
 
     await application.initialize()
-    # Запускаем run_polling в отдельном потоке, чтобы не блокировать основной event loop
-    asyncio.create_task(asyncio.to_thread(application.run_polling, close_loop=False))
+    # Запускаем run_polling в отдельном потоке с собственным event loop
+    asyncio.create_task(asyncio.to_thread(run_bot_polling, application))
     print("Бот запущен в фоне (polling).")
 
 async def on_cleanup(app: web.Application) -> None:
