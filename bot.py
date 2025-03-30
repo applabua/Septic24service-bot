@@ -122,7 +122,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # Команда /orders – показать содержимое файла orders.txt (только для администратора)
 async def orders_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != int(CHAT_ID):
-        await update.message.reply_text("У вас немає доступу до історії замовлень.")
+        await context.bot.send_message(chat_id=update.effective_user.id, text="У вас немає доступу до історії замовлень.")
         return
     try:
         with open("orders.txt", "r", encoding="utf-8") as f:
@@ -131,7 +131,7 @@ async def orders_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             content = "Історія замовлень порожня."
     except FileNotFoundError:
         content = "Файл з історією замовлень не знайдено."
-    await update.message.reply_text(content)
+    await context.bot.send_message(chat_id=update.effective_user.id, text=content)
 
 # Обработчик данных, отправленных через Telegram.WebApp.sendData
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -180,6 +180,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         with open("orders.txt", "a", encoding="utf-8") as f:
             f.write(f"[{now_str}]\n{finalMsg}\n\n")
 
+        # Отправляем заказ админу
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
         bonus = order_number % 5
@@ -195,8 +196,11 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             pass
 
-        if update.effective_message:
-            await update.effective_message.reply_text("Ваше замовлення збережено!\nОчікуйте на дзвінок.")
+        # Отправляем ответ напрямую пользователю
+        await context.bot.send_message(
+            chat_id=update.effective_user.id,
+            text=f"Ваше замовлення {formatted_order_number} збережено!\nОчікуйте на дзвінок."
+        )
 
         print("Отримано замовлення:", finalMsg)
 
