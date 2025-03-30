@@ -43,7 +43,7 @@ print("Бот працює...")
 
 # --- Ваши настройки ---
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"  # Токен бота
-CHAT_ID = "2045410830"                                  # ID администратора
+CHAT_ID = "2045410830"  # ID администратора
 
 # Словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
@@ -179,7 +179,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         print("Отримано замовлення:", finalMsg)
 
-# ===================== aiohttp: эндпоинт /save_order =====================
+# ===================== Эндпоинт /save_order =====================
 
 async def save_order(request):
     """Обработчик POST-запроса /save_order, который приходит из HTML."""
@@ -210,17 +210,17 @@ async def on_startup(app: web.Application) -> None:
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
 
-    # Инициализируем и запускаем бота в фоне
     await application.initialize()
-    # run_polling с параметром close_loop=False, чтобы не пытался закрыть event loop
-    asyncio.create_task(application.run_polling(close_loop=False))
+    # Запускаем polling как корутину в уже работающем event loop
+    asyncio.create_task(application.start_polling())
     print("Бот запущен в фоне (polling).")
 
 async def on_cleanup(app: web.Application) -> None:
     """Вызывается автоматически при завершении aiohttp-сервера."""
     print("on_cleanup: останавливаем Telegram-приложение…")
     application = app["telegram_app"]
-    # Аккуратно завершаем работу бота
+    # Останавливаем polling перед shutdown
+    await application.stop_polling()
     await application.shutdown()
     await application.post_shutdown()
     print("Бот остановлен.")
