@@ -41,8 +41,8 @@ from aiohttp import web
 print("Бот працює...")
 
 # --- Настройки ---
-TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"  # Токен бота
-CHAT_ID = "2045410830"           # ID администратора
+TOKEN = "ВАШ_TELEGRAM_BOT_TOKEN"  # Замените на ваш токен бота
+CHAT_ID = "ВАШ_CHAT_ID"            # Замените на ваш ID администратора
 
 # Словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
@@ -192,14 +192,6 @@ async def save_order(request):
     except Exception as e:
         return web.json_response({"status": "error", "error": str(e)}, status=500)
 
-# ======== Запуск бота (Polling) в отдельном потоке ========
-def run_bot_polling(application):
-    # Создаём свой event loop в этом потоке
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    # Отключаем установку сигнальных обработчиков, чтобы не было ошибки
-    application.run_polling(close_loop=False, install_sig_handlers=False)
-
 # ======== Настройки AIOHTTP + Bot ========
 async def on_startup(app: web.Application) -> None:
     """Запускается автоматически при старте aiohttp-сервера."""
@@ -215,9 +207,8 @@ async def on_startup(app: web.Application) -> None:
     # Инициализируем приложение бота
     await application.initialize()
 
-    # Запускаем polling в другом потоке
-    asyncio.create_task(asyncio.to_thread(run_bot_polling, application))
-
+    # Запускаем polling как фоновую асинхронную задачу
+    asyncio.create_task(application.start_polling())
     print("Бот запущен в фоне (polling).")
 
 async def on_cleanup(app: web.Application) -> None:
