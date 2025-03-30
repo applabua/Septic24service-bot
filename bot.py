@@ -43,10 +43,7 @@ CHAT_ID = "2045410830"  # ID администратора
 # Глобальный объект бота
 bot = Bot(token=TOKEN)
 
-# Словарь для бонус-счётчиков (не сохраняется между перезапусками)
-bonus_counters = {}
-
-# Функция для генерации глобального номера заказа на сервере (единой нумерации)
+# Функция для генерации глобального номера заказа (единая нумерация)
 def get_next_order_number():
     try:
         with open("last_order_number.txt", "r", encoding="utf-8") as f:
@@ -72,7 +69,7 @@ def save_order():
     formatted_order_number = "№" + str(order_number).zfill(5)
     # Если заказ уже содержит номер, удаляем его
     lines = order_text.split("\n")
-    if lines[0].startswith("№"):
+    if lines and lines[0].startswith("№"):
         lines.pop(0)
     final_order_text = f"{formatted_order_number}\n" + "\n".join(lines)
     
@@ -189,10 +186,12 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         print("Отримано замовлення:", finalMsg)
 
+# Функция для локального запуска Flask-сервера (используется только при запуске в режиме --run-both)
 def run_flask():
     port = int(os.environ.get("PORT", 5000))
     flask_app.run(host="0.0.0.0", port=port)
 
+# Функция для запуска Telegram-бота (polling)
 def main() -> None:
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
@@ -201,5 +200,14 @@ def main() -> None:
     application.run_polling()
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
-    main()
+    # Если запущено с параметром --bot-only, запускаем только бота
+    if "--bot-only" in sys.argv:
+        main()
+    # Если указано --run-both, запускаем оба сервиса в одном процессе (для локального тестирования)
+    elif "--run-both" in sys.argv:
+        threading.Thread(target=run_flask, daemon=True).start()
+        main()
+    else:
+        # По умолчанию ничего не запускаем, чтобы при импорте (например, Gunicorn) не стартовал встроенный сервер.
+        # Gunicorn подхватит переменную flask_app для обслуживания веб-запросов.
+        pass
