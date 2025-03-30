@@ -29,10 +29,10 @@ apscheduler.util.astimezone = patched_astimezone
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
-    ApplicationBuilder, 
-    CommandHandler, 
-    MessageHandler, 
-    ContextTypes, 
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
     filters
 )
 
@@ -41,8 +41,8 @@ from aiohttp import web
 print("Бот працює...")
 
 # --- Настройки ---
-TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"  # Токен бота
-CHAT_ID = "2045410830"  # ID администратора
+TOKEN = "ВАШ_TELEGRAM_BOT_TOKEN"  # Токен бота
+CHAT_ID = "ВАШ_CHAT_ID"           # ID администратора
 
 # Словарь для бонус-счётчиков (не сохраняется между перезапусками)
 bonus_counters = {}
@@ -177,6 +177,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         print("Отримано замовлення:", finalMsg)
 
+# ======== Эндпоинт /save_order ========
 async def save_order(request):
     """Обработчик POST-запроса /save_order, который приходит из HTML."""
     try:
@@ -191,27 +192,32 @@ async def save_order(request):
     except Exception as e:
         return web.json_response({"status": "error", "error": str(e)}, status=500)
 
-# Функция для запуска polling бота в отдельном потоке с собственным event loop
+# ======== Запуск бота (Polling) в отдельном потоке ========
 def run_bot_polling(application):
+    # Создаём свой event loop в этом потоке
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    application.run_polling(close_loop=False)
+    # Отключаем установку сигнальных обработчиков, чтобы не было ошибки
+    application.run_polling(close_loop=False, install_sig_handlers=False)
 
-# ===================== Функции запуска aiohttp + бота =====================
-
+# ======== Настройки AIOHTTP + Bot ========
 async def on_startup(app: web.Application) -> None:
     """Запускается автоматически при старте aiohttp-сервера."""
     print("on_startup: создаём Telegram-приложение…")
     application = ApplicationBuilder().token(TOKEN).build()
     app["telegram_app"] = application
 
+    # Регистрируем хендлеры
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
 
+    # Инициализируем приложение бота
     await application.initialize()
-    # Запускаем run_polling в отдельном потоке с собственным event loop
+
+    # Запускаем polling в другом потоке
     asyncio.create_task(asyncio.to_thread(run_bot_polling, application))
+
     print("Бот запущен в фоне (polling).")
 
 async def on_cleanup(app: web.Application) -> None:
