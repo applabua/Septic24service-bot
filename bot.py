@@ -106,7 +106,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         finalMsg += f"Телефон: {order.get('phone','')}\n"
         finalMsg += f"Область: {order.get('region','')}\n"
         finalMsg += f"Адреса: {order.get('address','')}\n"
-
+    
         serviceIndex = order.get('serviceIndex')
         if serviceIndex is not None:
             servicesTitles = [
@@ -120,7 +120,9 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 finalMsg += f"Послуга: {servicesTitles[serviceIndex]}\n"
             finalMsg += f"Довжина труб: {order.get('length','?')} м\n"
             finalMsg += f"Діаметр труб: {order.get('diameter','?')} мм\n"
-
+            finalMsg += f"Об'єм ємності: {order.get('volume','?')} м³\n"
+            finalMsg += f"Відстань від парковки до ємності: {order.get('distance','?')} м\n"
+        
         coords = order.get('coords')
         if coords and 'x' in coords and 'y' in coords:
             lat = coords['y']
