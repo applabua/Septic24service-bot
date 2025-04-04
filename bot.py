@@ -37,17 +37,21 @@ print("Бот працює...")
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
 
-# Глобальный список предопределённых номеров заказа (10 000 номеров)
-order_numbers = ["№" + str(i).zfill(5) for i in range(1, 10001)]
-# Список всех заказов (в памяти)
-orders_list = []
-
-def get_next_order_number():
-    global order_numbers
-    if order_numbers:
-        return order_numbers.pop(0)
+# Функция для генерации глобального номера заказа
+def get_next_order_number(user_id):
+    filename = "global_order_number.json"
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {"global_order": 0}
     else:
-        return None
+        data = {"global_order": 0}
+    data["global_order"] += 1
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    return data["global_order"]
 
 # Команда /start – отправляем пользователю кнопку для открытия WebApp
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -62,6 +66,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Натисніть кнопку нижче, щоб відкрити міні‑додаток і оформити замовлення:"
     )
     
+    # URL веб‑приложения на GitHub Pages, с передачей user_id
     web_app_url = "https://applabua.github.io/Septic24service/?user_id=" + str(user.id)
     keyboard = [[InlineKeyboardButton("Замовити послугу♻️", web_app=WebAppInfo(url=web_app_url))]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -70,17 +75,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message:
         await update.message.reply_photo(photo=photo_url, caption=greeting_text, reply_markup=reply_markup)
 
-# Команда /showorders – показать все заказы (только для администратора)
-async def show_orders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# Команда /orders – показать содержимое файла orders.txt (только для администратора)
+async def orders_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != int(CHAT_ID):
-        await update.message.reply_text("У вас немає доступу до перегляду замовлень.")
+        await update.message.reply_text("У вас немає доступу до історії замовлень.")
         return
-    if not orders_list:
-        await update.message.reply_text("Поки що немає жодного замовлення.")
-    else:
-        # Собираем все заказы в один текст
-        all_orders = "\n\n".join(orders_list)
-        await update.message.reply_text(all_orders)
+    try:
+        with open("orders.txt", "r", encoding="utf-8") as f:
+            content = f.read()
+        if not content.strip():
+            content = "Історія замовлень порожня."
+    except FileNotFoundError:
+        content = "Файл з історією замовлень не знайдено."
+    await update.message.reply_text(content)
 
 # Обработчик данных, отправленных через Telegram.WebApp.sendData
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -90,15 +97,15 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             order = json.loads(data_str)
         except Exception:
             order = {}
-        
-        # Получаем следующий номер заказа из предопределённого списка
-        assigned_number = get_next_order_number()
-        if not assigned_number:
-            await context.bot.send_message(chat_id=update.effective_user.id, text="Вибачте, більше немає вільних номерів замовлень.")
-            return
-        
-        # Формируем текст заказа
-        finalMsg = f"{assigned_number}\nНове замовлення від Septic24:\n"
+
+        # Генерируем глобальный номер заказа и рассчитываем номер по схеме 1-5
+        order_number = get_next_order_number(order.get('user_id', 'unknown'))
+        displayed_order = order_number % 5
+        if displayed_order == 0:
+            displayed_order = 5
+
+        # Формируем текст заказа для администратора (без номера заказа)
+        finalMsg = "Нове замовлення від Septic24:\n"
         finalMsg += f"Ім'я: {order.get('name','')}\n"
         finalMsg += f"Телефон: {order.get('phone','')}\n"
         finalMsg += f"Область: {order.get('region','')}\n"
@@ -132,22 +139,31 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if order.get('user_id'):
             finalMsg += f"UserID: {order.get('user_id')}\n"
 
-        # Сохраняем заказ в глобальном списке
-        orders_list.append(finalMsg)
-        
-        # Отправляем заказ администратору
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with open("orders.txt", "a", encoding="utf-8") as f:
+            f.write(f"[{now_str}]\n{finalMsg}\n\n")
+
+        # Отправляем заказ адміну
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
-        # Вычисляем бонус по номеру заказа
+        # Дублируем заказ и отправляем его также пользователю
         try:
-            num = int(assigned_number[1:])
+            if str(order.get('user_id')).isdigit():
+                await context.bot.send_message(chat_id=int(order.get('user_id')), text=finalMsg)
         except Exception:
-            num = 0
-        if num % 5 == 0:
-            bonus_text = "Ваше замовлення 5/5 ✅\nЗнижка 10% 🎉"
+            pass
+
+        # Вычисляем бонус по номеру заказа:
+        if displayed_order == 5:
+            bonus_text = (
+                f"Ваше замовлення 5/5 ✅\n"
+                "Знижка 10% 🎉"
+            )
         else:
-            bonus = num % 5
-            bonus_text = f"Ваше замовлення {bonus}/5 ✅\nЗнижка 2% 💧"
+            bonus_text = (
+                f"Ваше замовлення {displayed_order}/5 ✅\n"
+                "Знижка 2% 💧"
+            )
         try:
             if str(order.get('user_id')).isdigit():
                 await context.bot.send_message(chat_id=int(order.get('user_id')), text=bonus_text)
@@ -162,7 +178,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 def main() -> None:
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("showorders", show_orders))
+    application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
     application.run_polling()
 
