@@ -30,10 +30,6 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-import asyncio
-import os
-from aiohttp import web
-
 print("Бот працює...")
 
 # Токен бота и ID чата администратора
@@ -146,11 +142,19 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
-        # Определяем бонус и скидку
+        # Вычисляем бонус по номеру заказа:
+        # Если номер заказа кратен 5 – 10% скидка, иначе 2%
         if order_number % 5 == 0:
-            bonus_text = f"Ваше замовлення 5/5 ✅\nЗнижка 10% 🎉"
+            bonus_text = (
+                f"Ваше замовлення 5/5 ✅\n"
+                "Знижка 10% 🎉"
+            )
         else:
-            bonus_text = f"Ваше замовлення {order_number % 5}/5 ✅\nЗнижка 2% 💧"
+            bonus = order_number % 5
+            bonus_text = (
+                f"Ваше замовлення {bonus}/5 ✅\n"
+                "Знижка 2% 💧"
+            )
         try:
             if user_id_str.isdigit():
                 await context.bot.send_message(chat_id=int(user_id_str), text=bonus_text)
@@ -162,61 +166,12 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         print("Отримано замовлення:", finalMsg)
 
-# HTTP-эндпоинт для сохранения заказа (используется WebApp)
-async def save_order(request):
-    try:
-        data = await request.json()
-        order_text = data.get("order", "")
-        # Если в тексте заказа уже есть номер (первая строка начинается с "№"), удаляем её
-        lines = order_text.splitlines()
-        if lines and lines[0].startswith("№"):
-            lines = lines[1:]
-        # Генерируем глобальный номер заказа
-        order_number = get_next_order_number()
-        formatted_order_number = "№" + str(order_number).zfill(5)
-        finalMsg = formatted_order_number + "\n" + "\n".join(lines)
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open("orders.txt", "a", encoding="utf-8") as f:
-            f.write(f"[{now_str}]\n{finalMsg}\n\n")
-        # Определяем скидку и бонус
-        discount = 10 if order_number % 5 == 0 else 2
-        bonus_count = 5 if order_number % 5 == 0 else order_number % 5
-        response_data = {
-            "status": "ok",
-            "order_number": formatted_order_number,
-            "discount": discount,
-            "bonus": bonus_count,
-            "order_text": finalMsg
-        }
-        # Отправляем заказ админу через Telegram
-        await request.app['bot'].bot.send_message(chat_id=CHAT_ID, text=finalMsg)
-        return web.json_response(response_data)
-    except Exception as e:
-        return web.json_response({"status": "error", "error": str(e)})
-
-# Асинхронная функция для запуска бота и HTTP-сервера вместе
-async def main():
+def main() -> None:
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
-    
-    # Создаём приложение aiohttp и добавляем маршрут для /save_order
-    app = web.Application()
-    app.router.add_post("/save_order", save_order)
-    # Чтобы в save_order можно было обращаться к объекту бота
-    app['bot'] = application
-    
-    # Запускаем HTTP-сервер (порт берётся из переменной окружения PORT, иначе 8080)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"HTTP server started on port {port}")
-    
-    # Запускаем polling Telegram-бота (будет работать параллельно)
-    await application.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
