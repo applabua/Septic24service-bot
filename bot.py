@@ -89,6 +89,28 @@ async def orders_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         content = "Файл з історією замовлень не знайдено."
     await update.message.reply_text(content)
 
+# Новая команда /users – показать список уникальных UserID заказчиков (только для администратора)
+async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id != int(CHAT_ID):
+        await update.message.reply_text("У вас немає доступу до цієї команди.")
+        return
+    try:
+        with open("orders.txt", "r", encoding="utf-8") as f:
+            content = f.read()
+        user_ids = set()
+        for line in content.splitlines():
+            if line.startswith("UserID:"):
+                uid = line.split("UserID:")[1].strip()
+                if uid:
+                    user_ids.add(uid)
+        if user_ids:
+            msg = "Список користувачів:\n" + "\n".join(user_ids)
+        else:
+            msg = "Користувачі відсутні."
+    except FileNotFoundError:
+        msg = "Файл з історією замовлень не знайдено."
+    await update.message.reply_text(msg)
+
 # Обработчик данных, отправленных через Telegram.WebApp.sendData
 async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.web_app_data:
@@ -104,8 +126,8 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if displayed_order == 0:
             displayed_order = 5
 
-        # Формируем текст заказа для администратора (без номера заказа)
-        finalMsg = "Нове замовлення від Septic24:\n"
+        # Формируем текст заказа для администратора, включая номер заказа
+        finalMsg = f"Номер замовлення: {displayed_order}/5\nНове замовлення від Septic24:\n"
         finalMsg += f"Ім'я: {order.get('name','')}\n"
         finalMsg += f"Телефон: {order.get('phone','')}\n"
         finalMsg += f"Область: {order.get('region','')}\n"
@@ -153,17 +175,13 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             pass
 
-        # Вычисляем бонус по номеру заказа:
+        # Вычисляем бонус по номеру заказа и формируем красивое сообщение
         if displayed_order == 5:
-            bonus_text = (
-                f"Ваше замовлення 5/5 ✅\n"
-                "Знижка 10% 🎉"
-            )
+            bonus_text = ("Ваше замовлення 5/5 оформлено успішно! Дякуємо за ваше замовлення. "
+                          "Очікуйте на дзвінок. 📞\n\n🎉 Ви отримали знижку 10% на наступне замовлення!")
         else:
-            bonus_text = (
-                f"Ваше замовлення {displayed_order}/5 ✅\n"
-                "Знижка 2% 💧"
-            )
+            bonus_text = (f"Ваше замовлення {displayed_order}/5 оформлено успішно! Дякуємо за ваше замовлення. "
+                          "Очікуйте на дзвінок. 📞\n\n💧 Ви отримали знижку 2% на наступне замовлення!")
         try:
             if str(order.get('user_id')).isdigit():
                 await context.bot.send_message(chat_id=int(order.get('user_id')), text=bonus_text)
@@ -179,6 +197,7 @@ def main() -> None:
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
+    application.add_handler(CommandHandler("users", users_list))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
     application.run_polling()
 
