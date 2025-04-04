@@ -23,6 +23,7 @@ apscheduler.util.astimezone = patched_astimezone
 import logging
 import sys
 import json
+import threading
 from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -30,14 +31,14 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
+# Импортируем Flask для создания эндпоинта /save_order
+from flask import Flask, request, jsonify
+
 print("Бот працює...")
 
 # Токен бота и ID чата администратора
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
-
-# Словарь для бонус-счётчиков (не сохраняется между перезапусками)
-bonus_counters = {}
 
 # Функция для генерации глобального номера заказа на сервере
 def get_next_order_number():
@@ -148,7 +149,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             bonus = 5
         bonus_text = (
             f"Ваше замовлення {bonus}/5 ✅\n"
-            "Знижка 2% 💧, Кожне 5 замовлення – знижка 10% 🎉"
+            "Знижка 2% 💧, Кожне 5 замовлення – знижка 5% 🎉"
         )
         try:
             if user_id_str.isdigit():
@@ -161,11 +162,45 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         print("Отримано замовлення:", finalMsg)
 
+# Создаем Flask‑приложение для обработки /save_order
+app = Flask(__name__)
+
+@app.route("/save_order", methods=["POST"])
+def save_order_endpoint():
+    try:
+        data = request.get_json(force=True)
+    except Exception:
+        return jsonify({"error": "Invalid JSON"}), 400
+    order_text = data.get("order", "")
+    order_number = get_next_order_number()
+    formatted_order_number = "№" + str(order_number).zfill(5)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    finalMsg = f"{formatted_order_number}\n{order_text}"
+    try:
+        with open("orders.txt", "a", encoding="utf-8") as f:
+            f.write(f"[{now_str}]\n{finalMsg}\n\n")
+    except Exception as e:
+        print("Error writing to orders.txt:", e)
+    try:
+        application.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
+    except Exception as e:
+        print("Error sending Telegram message:", e)
+    return jsonify({"order_number": order_number})
+
+def run_flask():
+    app.run(host="0.0.0.0", port=5000)
+
 def main() -> None:
+    global application
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
+    
+    # Запускаем Flask-сервер в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.start()
+    
     application.run_polling()
 
 if __name__ == "__main__":
