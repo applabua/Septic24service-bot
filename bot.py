@@ -23,7 +23,6 @@ apscheduler.util.astimezone = patched_astimezone
 import logging
 import sys
 import json
-import threading
 from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -31,14 +30,18 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
-# Импортируем Flask для создания эндпоинта /save_order
-from flask import Flask, request, jsonify
+import asyncio
+import os
+from aiohttp import web
 
 print("Бот працює...")
 
 # Токен бота и ID чата администратора
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
+
+# Словарь для бонус-счётчиков (не сохраняется между перезапусками)
+bonus_counters = {}
 
 # Функция для генерации глобального номера заказа на сервере
 def get_next_order_number():
@@ -143,14 +146,11 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
-        # Вычисляем бонус по номеру заказа (по модулю 5)
-        bonus = order_number % 5
-        if bonus == 0:
-            bonus = 5
-        bonus_text = (
-            f"Ваше замовлення {bonus}/5 ✅\n"
-            "Знижка 2% 💧, Кожне 5 замовлення – знижка 5% 🎉"
-        )
+        # Определяем бонус и скидку
+        if order_number % 5 == 0:
+            bonus_text = f"Ваше замовлення 5/5 ✅\nЗнижка 10% 🎉"
+        else:
+            bonus_text = f"Ваше замовлення {order_number % 5}/5 ✅\nЗнижка 2% 💧"
         try:
             if user_id_str.isdigit():
                 await context.bot.send_message(chat_id=int(user_id_str), text=bonus_text)
@@ -162,46 +162,61 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         print("Отримано замовлення:", finalMsg)
 
-# Создаем Flask‑приложение для обработки /save_order
-app = Flask(__name__)
-
-@app.route("/save_order", methods=["POST"])
-def save_order_endpoint():
+# HTTP-эндпоинт для сохранения заказа (используется WebApp)
+async def save_order(request):
     try:
-        data = request.get_json(force=True)
-    except Exception:
-        return jsonify({"error": "Invalid JSON"}), 400
-    order_text = data.get("order", "")
-    order_number = get_next_order_number()
-    formatted_order_number = "№" + str(order_number).zfill(5)
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    finalMsg = f"{formatted_order_number}\n{order_text}"
-    try:
+        data = await request.json()
+        order_text = data.get("order", "")
+        # Если в тексте заказа уже есть номер (первая строка начинается с "№"), удаляем её
+        lines = order_text.splitlines()
+        if lines and lines[0].startswith("№"):
+            lines = lines[1:]
+        # Генерируем глобальный номер заказа
+        order_number = get_next_order_number()
+        formatted_order_number = "№" + str(order_number).zfill(5)
+        finalMsg = formatted_order_number + "\n" + "\n".join(lines)
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open("orders.txt", "a", encoding="utf-8") as f:
             f.write(f"[{now_str}]\n{finalMsg}\n\n")
+        # Определяем скидку и бонус
+        discount = 10 if order_number % 5 == 0 else 2
+        bonus_count = 5 if order_number % 5 == 0 else order_number % 5
+        response_data = {
+            "status": "ok",
+            "order_number": formatted_order_number,
+            "discount": discount,
+            "bonus": bonus_count,
+            "order_text": finalMsg
+        }
+        # Отправляем заказ админу через Telegram
+        await request.app['bot'].bot.send_message(chat_id=CHAT_ID, text=finalMsg)
+        return web.json_response(response_data)
     except Exception as e:
-        print("Error writing to orders.txt:", e)
-    try:
-        application.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
-    except Exception as e:
-        print("Error sending Telegram message:", e)
-    return jsonify({"order_number": order_number})
+        return web.json_response({"status": "error", "error": str(e)})
 
-def run_flask():
-    app.run(host="0.0.0.0", port=5000)
-
-def main() -> None:
-    global application
+# Асинхронная функция для запуска бота и HTTP-сервера вместе
+async def main():
     application = ApplicationBuilder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("orders", orders_history))
     application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, webapp_data_handler))
     
-    # Запускаем Flask-сервер в отдельном потоке
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.start()
+    # Создаём приложение aiohttp и добавляем маршрут для /save_order
+    app = web.Application()
+    app.router.add_post("/save_order", save_order)
+    # Чтобы в save_order можно было обращаться к объекту бота
+    app['bot'] = application
     
-    application.run_polling()
+    # Запускаем HTTP-сервер (порт берётся из переменной окружения PORT, иначе 8080)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"HTTP server started on port {port}")
+    
+    # Запускаем polling Telegram-бота (будет работать параллельно)
+    await application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
