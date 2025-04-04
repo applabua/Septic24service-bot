@@ -37,24 +37,21 @@ print("Бот працює...")
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
 
-# Функция для генерации индивидуального номера заказа для каждого пользователя
+# Функция для генерации глобального номера заказа
 def get_next_order_number(user_id):
-    filename = "user_order_numbers.json"
+    filename = "global_order_number.json"
     if os.path.exists(filename):
         try:
             with open(filename, "r", encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
-            data = {}
+            data = {"global_order": 0}
     else:
-        data = {}
-    user_key = str(user_id)
-    last_order = data.get(user_key, 0)
-    last_order += 1
-    data[user_key] = last_order
+        data = {"global_order": 0}
+    data["global_order"] += 1
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f)
-    return last_order
+    return data["global_order"]
 
 # Команда /start – отправляем пользователю кнопку для открытия WebApp
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -101,9 +98,8 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             order = {}
 
-        user_id_str = order.get('user_id','')
-        # Генерируем индивидуальный номер заказа для данного пользователя
-        order_number = get_next_order_number(user_id_str if user_id_str else "unknown")
+        # Генерируем глобальный номер заказа
+        order_number = get_next_order_number(order.get('user_id', 'unknown'))
         formatted_order_number = "№" + str(order_number).zfill(5)
         
         # Формируем текст заказа для администратора с номером заказа
@@ -138,8 +134,8 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             finalMsg += f"Геолокація: {lat:.5f}, {lon:.5f}\n"
             finalMsg += f"OpenStreetMap: https://www.openstreetmap.org/?mlat={lat}&mlon={lon}\n"
 
-        if user_id_str:
-            finalMsg += f"UserID: {user_id_str}\n"
+        if order.get('user_id'):
+            finalMsg += f"UserID: {order.get('user_id')}\n"
 
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open("orders.txt", "a", encoding="utf-8") as f:
@@ -147,7 +143,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
-        # Вычисляем бонус по номеру заказа для данного пользователя:
+        # Вычисляем бонус по номеру заказа:
         if order_number % 5 == 0:
             bonus_text = (
                 f"Ваше замовлення 5/5 ✅\n"
@@ -160,8 +156,8 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "Знижка 2% 💧"
             )
         try:
-            if user_id_str.isdigit():
-                await context.bot.send_message(chat_id=int(user_id_str), text=bonus_text)
+            if str(order.get('user_id')).isdigit():
+                await context.bot.send_message(chat_id=int(order.get('user_id')), text=bonus_text)
         except Exception:
             pass
 
