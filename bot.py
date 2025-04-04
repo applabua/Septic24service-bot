@@ -23,6 +23,7 @@ apscheduler.util.astimezone = patched_astimezone
 import logging
 import sys
 import json
+import os
 from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -36,19 +37,23 @@ print("Бот працює...")
 TOKEN = "7747992449:AAEqWIUYRlhbdiwUnXqCYV3ODpNX9VUsed8"
 CHAT_ID = "2045410830"  # ID администратора
 
-# Словарь для бонус-счётчиков (не сохраняется между перезапусками)
-bonus_counters = {}
-
-# Функция для генерации глобального номера заказа на сервере
-def get_next_order_number():
-    try:
-        with open("last_order_number.txt", "r", encoding="utf-8") as f:
-            last_order = int(f.read().strip())
-    except Exception:
-        last_order = 0
+# Функция для генерации индивидуального номера заказа для каждого пользователя
+def get_next_order_number(user_id):
+    filename = "user_order_numbers.json"
+    if os.path.exists(filename):
+        try:
+            with open(filename, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
+    else:
+        data = {}
+    user_key = str(user_id)
+    last_order = data.get(user_key, 0)
     last_order += 1
-    with open("last_order_number.txt", "w", encoding="utf-8") as f:
-        f.write(str(last_order))
+    data[user_key] = last_order
+    with open(filename, "w", encoding="utf-8") as f:
+        json.dump(data, f)
     return last_order
 
 # Команда /start – отправляем пользователю кнопку для открытия WebApp
@@ -96,8 +101,9 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception:
             order = {}
 
-        # Генерируем глобальный номер заказа
-        order_number = get_next_order_number()
+        user_id_str = order.get('user_id','')
+        # Генерируем индивидуальный номер заказа для данного пользователя
+        order_number = get_next_order_number(user_id_str if user_id_str else "unknown")
         formatted_order_number = "№" + str(order_number).zfill(5)
         
         # Формируем текст заказа для администратора с номером заказа
@@ -132,7 +138,6 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             finalMsg += f"Геолокація: {lat:.5f}, {lon:.5f}\n"
             finalMsg += f"OpenStreetMap: https://www.openstreetmap.org/?mlat={lat}&mlon={lon}\n"
 
-        user_id_str = order.get('user_id','')
         if user_id_str:
             finalMsg += f"UserID: {user_id_str}\n"
 
@@ -142,8 +147,7 @@ async def webapp_data_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         await context.bot.send_message(chat_id=CHAT_ID, text=finalMsg)
 
-        # Вычисляем бонус по номеру заказа:
-        # Если номер заказа кратен 5 – 10% скидка, иначе 2%
+        # Вычисляем бонус по номеру заказа для данного пользователя:
         if order_number % 5 == 0:
             bonus_text = (
                 f"Ваше замовлення 5/5 ✅\n"
